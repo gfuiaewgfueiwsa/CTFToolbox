@@ -1,0 +1,67 @@
+==========================================================================
+ .NET / C# 逆向与改包速查（Reverse）
+==========================================================================
+
+【0x01 识别与工具】
+  DIE/PE 看 mscoree.dll/.NET 元数据；exe 同目录常有 .dll、.exe.config
+  首选 dnSpy（可反编译、调试、改 IL 后直接保存）：
+    https://github.com/dnSpyEx/dnSpy
+  备选: ILSpy(只读为主)、dotPeek、JustDecompile
+  命令行: ilspycmd 程序集.dll > out.cs
+  原始 IL: ildasm /  dnSpy 中 View->IL 语言
+  运行时: .NET Framework (mscorlib) / .NET Core 5+ (System.Private.CoreLib)
+
+【0x02 基本流程】
+  1) dnSpy 拖入 exe（exe 只是启动器，逻辑常在同名/多个 dll）
+  2) 搜索(Search 面板): flag、Check、Verify、License、Success、btn_Click
+  3) 定位按钮事件/校验函数，读反编译 C#，多数题直接能看懂算法
+  4) 需要绕过: 直接编辑 IL 或 C#（见下），保存模块替换原文件
+
+【0x03 dnSpy 动态调试】
+  exe 直接 F5 运行；下断点在比较/弹窗处
+  找不到入口: 模块窗口看 Program.Main、WPF 的 App、WinForms 构造
+  条件断点、局部变量窗口直接看 flag 中间值
+  反调试: DebuggerIsAttached/IsLogging -> 编辑方法直接 return false
+  无法启动(缺运行时): 装对应 .NET Framework；Core 程序改 launchSettings
+    或 dnSpyEx 新版本支持 .NET Core/5/6
+
+【0x04 静态改包（最常用）】
+  方法体编辑:
+    右键方法 -> Edit Method (C#)，把校验改成恒真:
+      private bool Check(string s){ return true; }
+      或直接 return true; 删掉原逻辑
+    改完点 Compile，File -> Save Module 保存（可另存）
+  IL 级修改:
+    改 brtrue/brfalse、ret、ldc.i4（整数常量）、nop 掉抛异常
+    字符串: 编辑 ldstr（硬编码 key/url）
+  强命名签名: 保存时去掉签名勾选，或 sn -Vr 跳过验证
+  保存后无法运行: 检查依赖 dll 是否一起改、目标框架、是否被 NativeCall
+
+【0x05 混淆与反混淆】
+  ConfuserEx 1.x: ConfuserEx-Unpacker/ConfuserEx 工具:
+    拖入 -> 勾选 anti-tamper/control flow/proxy -> Decrypt/Protect -> 输出 dll
+  ConfuserEx2/新版: de4dot 社区分支、OldRod、EazFixer(Eazfuscator)、
+    NETReactorSlayer(.NET Reactor)、de4dot-cex
+  de4dot: de4dot app.exe -> app-cleaned.exe（支持几十种混淆器识别）
+  名称混淆: 不影响逻辑，dnSpy 里手动重命名关键类/方法
+  控制流平坦化: 反编译后看 switch 分发变量，或用反混淆插件
+  字符串加密: 多数脱壳工具会还原；没还原就 hook/动态在解密后下断
+  资源/嵌入 dll: Assembly.Load(压缩字节数组)，运行时释放:
+    dnSpy 调试在 Assembly.Load 下断拿 bytes，或 Memory Module 提取
+  本机代码: NativeCallable/.native 编译、IL2CPP(见 Android 指南)
+
+【0x06 PowerShell / 其他托管】
+  ps1/psm1: 混淆常见 base64 -enc、IEX、字符串反转；
+    静态: 解 base64、格式化（PowerShell ISE/VSCode）；动态 AMSITrigger
+    注意 AMSI/约束语言模式，分析在隔离 VM
+  Visual Basic .NET: 同 .NET，dnSpy 直接看
+  Unity Mono: Assembly-CSharp.dll 用 dnSpy 改，保存回 Managed 目录
+    （无 IL2CPP 时）；IL2CPP 走 global-metadata 路线
+
+【0x07 典型 CTF 题型】
+  弹窗输入序列号: 找 Button_Click -> 比较逻辑 -> 改 return true 或逆出 key
+  本地加密 flag: 抠 C# 算法到 Python/直接在 dnSpy 用 C# Interactive 复现
+  联网验证: 改 hosts 或 patch 掉 HTTP 返回判断
+  授权过期: 改 DateTime 比较、license 校验函数
+  自校验: patch 后 hash 不匹配 -> 找校验方法一并改
+==========================================================================

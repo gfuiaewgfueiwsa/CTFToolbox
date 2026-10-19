@@ -1,0 +1,99 @@
+==========================================================================
+ gdb / pwndbg / pwntools 调试速查（Pwn 必备）
+==========================================================================
+
+【0x01 启动】
+  gdb ./pwn                      直接调试
+  gdb ./pwn < payload            用 payload 文件作输入
+  pwntools 自动下断:
+    io = process('./pwn'); gdb.attach(io, 'b *0x401234\nc')
+    context.terminal = ['tmux','splitw','-h']
+  core dump:
+    ulimit -c unlimited; ./pwn < payload ; ls /tmp/core* 或当前目录 core
+    gdb ./pwn core  ->  bt / info registers 看崩溃点
+
+【0x02 pwndbg 常用命令】
+  运行控制:  r(run) c(continue) n(next) s(step) ni(si 指令级)
+             finish  until *addr  kill  q
+  断点:      b *0x401234   b *$rebase(0x1234)   b system
+             tbreak(临时)  watch var(硬件写断点)  rwatch/awatch
+             delete <id>  disable/enable  info b
+             b *0x401234 if $rdi==1
+  查看:      i r(寄存器) i functions  i variables  i proc mappings
+             x/20gx $rsp          20 个 8 字节十六进制
+             x/20i $rip           反汇编 20 条
+             x/s $rdi             按字符串
+             x/100wx buf          100 个 4 字节
+             telescope / tele $rsp 30   (pwndbg 栈展开)
+             canary               显示 canary
+  内存:      vmmap / vprot        段与权限； mprotect 改权限
+             search -t string "/bin/sh"
+             search -t qword 0xdeadbeef
+             procinfo  checksec  file
+  堆(pwndbg):
+             heap / arenas / bins / fastbins / tcache / unsortedbin
+             malloc_chunk <addr>   vis_heap_chunks
+             try_free / try_malloc  (模拟)
+             heap -v 0x5555...
+  GOT/PLT:   got  plt  disassemble main  disas vuln
+  函数:      context  context code/stack/regs
+             u 50 $rsp   (undump)  dq/dd/dw/dc
+
+【0x03 偏移定位】
+  cyclic 200                  生成模式串
+  cyclic -l 0x6161616c        崩溃地址->偏移
+  cyclic -l $rsp              直接算（看崩溃时 rsp 内容）
+  pwntools: cyclic(200) / cyclic_find(0x6161616c)
+  64 位栈布局:  [buf..] + 8字节rbp + 返回地址
+  32 位:       [buf..] + 4字节ebp + 返回地址 + 参数1 参数2...
+  注意 leave;ret: rbp 伪造栈迁移时偏移多在 rbp
+
+【0x04 ROP 链】
+  ROPgadget --binary ./pwn | grep -E "pop rdi|ret"
+  ROPgadget --binary ./pwn --string "/bin/sh"
+  ropper -f ./pwn --search "pop rdi"
+  one_gadget ./libc.so.6
+  64 位 system("/bin/sh") 标准链:
+    pop rdi; ret  ->  /bin/sh 地址  ->  ret(对齐)  ->  system
+  栈对齐: system/printf 用 movaps 时，链前加一个单独 ret gadget
+  libc 基址 = puts 真实地址 - libc.sym['puts']
+  泄露模板: pop_rdi -> got['puts'] -> plt['puts'] -> main
+
+【0x05 libc 相关】
+  ldd ./pwn                     看链接的 libc
+  远程泄露 puts 真实地址后:
+    libc-database: ./find puts 0x7f...  或在线 libc.blukat.me / libc.rip
+  patchelf --set-interpreter ./ld-2.27.so --set-rpath . ./pwn
+  patchelf --replace-needed libc.so.6 ./libc.so.6 ./pwn
+  用对应 loader: ./ld-2.27.so ./pwn
+  Docker 复现环境:
+    docker run -it -v $PWD:/pwn ubuntu:18.04
+    apt install gdb python3 -y
+  pwndbg: git clone https://github.com/pwndbg/pwndbg && ./setup.sh
+  gef/peda 命令差异: pattern_create/search、xinfo、heap
+
+【0x06 pwntools 常用 API】
+  context(arch='amd64', os='linux', log_level='debug')
+  p32/p64/u32/u64  flat()  asm()  disasm()  shellcraft.sh()
+  ELF('./pwn'): e.sym['main'] e.got['puts'] e.plt['puts'] e.search(b'/bin/sh')
+  ROP(e): rop.call('puts',[e.got['puts']]); rop.dump()
+  接收: recv/recvline/recvuntil/recvn/recvregex/recvu
+  发送: send/sendline/sendafter/sendlineafter
+  数字: int(b'123\n') ; 解析泄露 u64(seg.ljust(8,b'\x00'))
+  爆破: for i in range(...): io=remote(...) ；失败 io.close()
+  多线程爆破 canary: 参考 canary_leak_bypass.py
+  日志: context.terminal；timeout= 设置；io.poll() 判存活
+
+【0x07 常见题型决策树】
+  checksec 看保护:
+   NX 关:                 shellcode -> ret2shellcode
+   无 Canary 无 PIE:
+     有 system+/bin/sh:    ret2text / ret2system
+     动态链接:             ret2libc（泄露 puts -> system）
+     静态:                 ret2syscall / ROP / SROP(sigreturn)
+   有 Canary:             泄露 canary / fork 爆破
+   有 PIE:                泄露程序基址（栈/libc/格式化串）
+   格式化字符串:           %p 泄露、%n 任意写（GOT/返回地址/hook）
+   菜单堆题:              UAF/double free/tcache/fastbin/house 系列
+   只有输入输出无溢出:     整数溢出/符号问题/越界读写/逻辑漏洞
+==========================================================================

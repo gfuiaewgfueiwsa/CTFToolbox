@@ -1,0 +1,56 @@
+==========================================================================
+ UPX 脱壳 / 壳识别 操作速查（Reverse）
+==========================================================================
+
+【0x01 判断是否 UPX】
+  Linux:  strings ./bin | grep -i upx
+          区段名 UPX0/UPX1（readelf -S / IDA Segments）
+          入口点在 UPX1，特征: pushad/push 大量寄存器 + 尾部 popad + 远跳
+  Windows: DIE(Detect It Easy) 显示 "UPX 3.x"；区段 UPX0/UPX1
+  软件内置: 工具中心 -> DIE、x64dbg、UPX
+
+【0x02 标准脱壳（未魔改）】
+  upx -d packed -o unpacked
+    Windows: upx.exe -d crackme.exe -o crackme_un.exe
+    失败常见原因:
+      NotPackedException: 版本不匹配 -> 用对应版本 UPX（查 DIE 报的版本号）
+      魔改 UPX（改了 magic/区段名）-> 手工脱壳
+
+【0x03 手工脱壳（x64dbg / x32dbg，Windows）】
+  1) 载入后 F9 运行到入口（UPX 入口 pushad）
+  2) 单步到第一次大跳转，或直接下硬件断点:
+       观察栈，pushad 后在 ESP 指向处右键 -> 断点 -> 硬件访问断点(Dword)
+  3) F9 运行，停在 popad 之后的 jmp OEP 处
+  4) 单步过 jmp 到达原始入口 OEP
+  5) 插件 Scylla: OEP 填当前地址 -> IAT AutoSearch -> Get Imports
+       -> 修复无效项 -> Fix Dump（先 Dump 进程内存再 Fix dump）
+  通用: 也可用 x32dbg 自带 "Scylla"；保存为 unpacked.exe
+
+【0x04 手工脱壳（Linux，gdb）】
+  1) gdb ./packed，starti 停在第一条
+  2) UPX 解压结束会跳到 OEP；在 mprotect/解压循环后找 jmp/call
+       特征: 末尾 popal/popa 后 jmp eax/reg
+  3) 在跳转目标下断: b *0x...  然后 c，到达 OEP
+  4) 从 OEP dump:
+       gcore core.bin  或用 /proc/<pid>/maps + dd
+       更方便: 用 unicorn/qemu 或 upx -d；
+       工具: linux 下可用 "unipacker"（pip install unipacker，UPX 自动模拟脱壳）
+         python -m unipacker ./packed
+  5) 修复 ELF: dump 后用 unipacker 直接产出可执行文件最省事
+
+【0x05 魔改 UPX】
+  - 区段名被改: 二进制里搜 UPX0/UPX1 字符串还原，或改回标准名再 upx -d
+  - magic 被改: 对比标准 UPX stub，patch 回原始字节（见 pe_elf_patch.py）
+  - 反调试: 找 IsDebuggerPresent/ptrace/rdtsc，patch 成 nop/返回 0
+  - 多层壳: 脱一层存一次，再识别下一层
+  - UPX + 自校验: 脱壳后校验失败，patch 校验跳转或还原被校验字节
+
+【0x06 其他常见壳速查】
+  ASPack/ASProtect/PECompact/VMP/Themida/Enigma:
+    VMP/Themida 一般不追求完全脱壳，找 OEP 后 dump + 修复 IAT，或动态调试绕
+  .NET: ConfuserEx/ConfuserEx2 -> de4dot、ConfuserEx-Unpacker
+  Java:  ProGuard(改名不加密, jadx 直接看)、Allatori/Stringer(字符串加密)
+  PyInstaller: pyinstxtractor.py 解包 -> pyc magic 修复(见 pyc_magic_repair.py)
+  Nuitka: 编译成 C，无法还原 py，按原生逆向
+  Electron asar: npx asar extract app.asar out
+==========================================================================

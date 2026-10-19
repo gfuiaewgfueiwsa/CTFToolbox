@@ -1,0 +1,82 @@
+==========================================================================
+ Volatility 内存取证速查（CTF Forensics 高频）
+==========================================================================
+
+【0x01 环境与 profile】
+ Volatility 2 (Python2，老题主流):
+    python2 vol.py -f mem.raw imageinfo
+    python2 vol.py -f mem.raw --profile=Win7SP1x64 <插件>
+ Volatility 3 (Python3，新题):
+    vol -f mem.raw windows.info
+    vol -f mem.raw windows.pslist
+    3 不需要 profile，符号表自动下载/离线 symbols 包
+
+【0x02 进程与命令】
+  pslist / psscan / pstree          进程列表（psscan 可发现被卸载的）
+  cmdline / cmdscan / consoles      命令行历史、控制台缓冲（常直接含 flag 命令）
+  dlllist -p PID                    加载的 dll
+  handles -p PID                    句柄
+  envars -p PID                     环境变量
+  svcdiff / svcscan                 服务（可疑服务持久化）
+  malfind / malfind -p PID          注入代码/可执行私有内存
+  hollowfinds(v3: hollowfind)       进程镂空
+  ldrmodules                        隐藏/未链接模块
+  procdump -p PID -D out/           dump 进程
+  memmap -p PID --dump-file p.dmp
+  vaddump -p PID -D out/
+
+【0x03 凭据（重点）】
+  hashdump / lsadump / cachedump    SAM/LSA/域缓存哈希
+  mimikatz(v2: windows.hashdump、)
+  v3: vol -f mem.raw windows.hashdump
+      vol -f mem.raw windows.lsadump
+      vol -f mem.raw windows.cachedump
+  lsass 内存: procdump lsass 后本机 mimikatz；或 volatility mimikatz 插件
+
+【0x04 文件与注册表】
+  filescan                          全文件对象（含已删除/打开中的文件）
+    filescan | grep -i flag
+  dumpfiles -Q 0xPHYSOFFSET -D out/ 或 --pid/--name
+  filescan 找 offset -> dumpfiles -Q <offset> -D out
+  hivelist                          注册表 hive 地址
+  hivedump -o 0x...
+  printkey -K "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+  userassist                        程序运行记录（rot13 键名）
+  shellbags                         文件夹访问痕迹
+  mftparser                         从内存解析 MFT（找文件痕迹）
+
+【0x05 网络】
+  netscan (Vista+) / connections / connscan / sockets / sockscan
+  netstat(v3 windows.netscan)
+  找异常外联、反弹连接、C2 IP、监听端口
+
+【0x06 内存中的图片/文本/flag】
+  strings:
+    strings -e l mem.raw | grep -i flag    UTF-16
+    strings mem.raw | grep -i flag
+    strings -e l mem.raw | grep -i pass
+  clipboard (v2 clipboard / v3 windows.clipboard)
+  consoles/cmdscan 看敲过的命令
+  editbox / windows.gui       窗口标题、编辑框内容
+  screenshot / gditimer / deskscan  截屏/GDI 内容
+  yarascan:
+    vol -f mem.raw yarascan -Y "flag{"
+    vol -f mem.raw yarascan -p PID -Y "rule..."
+  truecrypt/keepass 插件: truecryptsummary、keepass 内存主密码
+
+【0x07 Linux/mac 内存】
+  linux.pslist/linux.pstree、linux.bash、linux.proc.maps
+  linux.bash_history、linux.check_syscall
+  mac.pstree、mac.bash、mac.malfind
+
+【0x08 典型 CTF 流程】
+  1 imageinfo/info 确定系统
+  2 pslist+pstree 找可疑进程（cmd/powershell/notepad/未知 exe）
+  3 cmdline/consoles 看命令历史（很多题 flag 直接在命令里）
+  4 filescan | grep flag/可疑扩展名 -> dumpfiles
+  5 hashdump 拿哈希 -> hashcat/john
+  6 hivelist+printkey 查自启/userassist
+  7 netscan 查外联；malfind 查注入
+  8 截图/clipboard/editbox 找图形界面痕迹
+  9 找不到就 strings -e l + grep flag，yarascan 全扫
+==========================================================================

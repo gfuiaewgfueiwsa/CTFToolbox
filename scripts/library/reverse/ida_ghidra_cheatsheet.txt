@@ -1,0 +1,71 @@
+==========================================================================
+ IDA Pro / Ghidra 逆向速查（Reverse 通用）
+==========================================================================
+
+【0x01 上手流程】
+  1) file/checksec/DIE 看架构、位数、壳、语言（.NET/Go/Rust/Qt）
+  2) 找入口与关键字符串: Shift+F12(IDA) / Search->For Strings(Ghidra)
+     双击字符串 -> X 查看交叉引用，定位 "Correct/Wrong/flag" 处理函数
+  3) 跟 main: IDA 中 __libc_start_main 第二个参数；Ghidra entry->main
+  4) F5 反编译(IDA) / Ctrl+E 反编译(Ghidra)，先读伪代码再看汇编
+  5) 重命名(N/L)、改类型(Y)、加注释(;)，边看边整理
+
+【0x02 IDA 常用快捷键】
+  空格      图形/文本视图切换        F5        Hex-Rays 反编译
+  N         重命名                  Y         修改函数/变量类型
+  G         跳地址                  X         交叉引用
+  Esc/Ctrl+Enter  前进后退          Tab       伪代码<->汇编
+  Shift+F12 字符串窗口              Shift+F4  段/段表
+  Alt+T     立即数/字节搜索         Alt+B     字节序列搜索
+  U         取消定义                C         转为代码    P 定义函数
+  A         字符串                  D         数据
+  H         十进制/十六进制切换     R         字符/符号名
+  /         注释(伪代码)            ;         注释(汇编)
+  Edit->Patch program->Assemble/Change byte 直接改指令（再 Edit->Patch->Apply）
+  File->Produce file->Create C file / DIF 导出
+
+【0x03 Ghidra 常用】
+  双击 L-String 看字符串；右键 References->Show References to Address
+  反编译窗口: 右键 Rename Variable(L)、Retype(L)、Edit Function Signature
+  Search->For Scalars 找魔数(0x67452301 MD5、0x9e3779b9 TEA)
+  Window->Defined Strings；Memory Map 看段权限
+  Scripting: Jython/Python，Window->Script Manager
+  导出: File->Export Program (C/C++/HTML)
+  自动分析卡住: 重新 Import，关掉部分 Analyzers（Go/Rust 大文件）
+
+【0x04 高频算法特征（一眼识别）】
+  TEA/XTEA: 魔数 0x9e3779b9 (2654435769)，delta，sum，<<4 >>5
+  XXTEA:   同样 delta，带 n 长度循环
+  AES:     S 盒 0x63,0x7c,0x77,0x7b...；轮密钥；T 表
+  DES:     S 盒、置换表、16 轮
+  MD5:     0x67452301,0xefcdab89,0x98badcfe,0x10325476
+  SHA1:    0x67452301,0xEFCDAB89,0x98BADCFE,0x10325476,0xC3D2E1F0
+  SHA256:  0x6a09e667,0xbb67ae85,0x3c6ef372...
+  Base64:  字符表 ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef...0123456789+/
+  RC4:     256 字节 KSA 初始化 + swap + PRGA
+  RSA:     大整数、pow、65537
+  CRC32:   0xEDB88320 表
+  zlib:    0x789c/0x7801 头、inflate/deflate
+  自定义:  大量 rol/ror、固定数组、逐字节变换 -> 还原成 Python 复现
+  VM 题:   取指-译码-执行循环(while switch)，opcode 表，先还原指令集
+
+【0x05 动态调试配合】
+  Linux x86/x64: gdb+pwndbg（见 gdb_pwndbg_cheatsheet.txt）
+  Windows: x64dbg；.NET: dnSpy(可直接改 IL 并保存)
+  反调试: IsDebuggerPresent/NtQueryInformationProcess/ptrace/
+          rdtsc 时间检测/TLS 回调 -> patch nop 或 ScyllaHide 插件
+  IDA 调试: linux_server/linux_server64、win32_remote；attach 进程
+  反混淆: 控制流平坦化找分发变量；符号执行 angr 直接求（angr_solver_template.py）
+
+【0x06 典型套路】
+  输入即 flag 校验:
+    逐字符比较 -> 静态读比较值/key 反推；或下断 memcmp/strcmp 看参数
+    加密后比较 -> 抠加密算法用 Python 复现，对密文求逆
+    网络校验   -> 抓包/改 hosts/本地搭服务器返回正确响应
+  自修改代码: 运行时解密 -> 动态 dump 解密后内存
+  Go:       函数名保留(prefix main.)，字符串带长度，搜 gopclntab；
+            关 Go 分析插件冲突，用 IDA Go 插件/Ghidra golang analyzer
+  Rust:     符号冗长，搜 core::panicking 定位，关注 &str 指针长度对
+  C++:      虚表 this+offset，RTTI 看类名；STL 字符串内存布局
+  Qt:       字符串 QString(UTF-16)，信号槽，资源在 qrc
+==========================================================================

@@ -1,0 +1,88 @@
+==========================================================================
+ 磁盘/镜像取证速查（RAW/E01/内存卡/U盘/分区）
+==========================================================================
+
+【0x01 镜像与基本信息】
+  制作镜像(只读、不污染证据):
+    dd if=/dev/sdb of=usb.raw bs=4M conv=sync,noerror
+    dcfldd if=/dev/sdb of=usb.raw hash=md5,sha256 hashlog=h.txt
+    Guymager/FTK Imager 图形化，可直接出 E01
+  镜像信息:
+    fdisk -l usb.raw ; file usb.raw
+    mmls usb.raw                 # The Sleuth Kit 分区表
+    fsstat -o <起始扇区> usb.raw # 文件系统信息
+  挂载(只读，loop + 偏移):
+    mmls usb.raw 找 StartSector
+    mount -o ro,loop,offset=$((START*512)),noatime usb.raw /mnt
+    E01 先转: ewfmount image.E01 /mnt/ewf 再 mount /mnt/ewf/ewf1
+
+【0x02 The Sleuth Kit（Kali 自带，不挂载也能查）】
+  fls -r -o START usb.raw              递归列文件（含删除项，带 inode）
+  fls -r -p -o START usb.raw | less
+  icat -o START usb.raw <inode> > out  按 inode 提取（删除文件恢复）
+  istat -o START usb.raw <inode>       inode 时间戳/簇链
+  fsstat / fls -d/-r；FAT/NTFS/ext 均支持
+  blkls/blkcat                         未分配空间（雕刻）
+  blkls usb.raw > unalloc.bin
+  时间线:
+    fls -m "/" -r -o START usb.raw > body
+    mac-robber / mactime -b body > timeline.txt
+    mactime -b body 2024-01-01..2024-12-31
+
+【0x03 文件雕刻（删除恢复）】
+  photorec usb.raw / TestDisk         按文件签名批量恢复（最强）
+  foremost -i usb.raw -o out/
+  scalpel usb.raw -o out/ （先改 scalpel.conf 启用类型）
+  binwalk -e usb.raw                   固件/内嵌文件
+  本工具箱: misc/file_carver.py 做轻量签名雕刻
+  恢复后文件打不开: 修文件头(misc/fake_header_fix.py)、找头尾手工拼
+
+【0x04 NTFS 专项】】
+  MFT:
+    ntfsinfo -m /dev/sdb1
+    MFTRCMD / MFTExplorer / analyzeMFT.py:
+      analyzeMFT.py -f \$MFT -o mft.csv
+    icat 提取 $MFT(inode 0) 后分析，含 $STANDARD_INFO/$FILE_NAME 时间
+  ADS 备用数据流:
+    fls -r | grep ':' ; ntfscat -s stream
+    dir /r (Windows)；Get-Item -Stream *
+  USN Journal / $LogFile: 记录文件操作历史
+  卷影副本:
+    vssadmin list shadows (Windows)
+    vshadowmount image.E01 /mnt/vss
+  回收站: $Recycle.Bin/<SID>/ 下 $I(元数据)/$R(原内容)
+  Prefetch(.pf): 执行过的程序与次数
+  LNK 跳转列表: 最近打开文件路径与时间
+  Thumbcache/IconCache
+
+【0x05 Linux ext 专项】
+  extundelete /dev/sdb1 --restore-all
+  ext4magic /dev/sdb1 -a $(date -d ... +%s) -r -d out/
+  debugfs /dev/sdb1: lsdel、dump <inode>
+  journal: debugfs logdump；日志里残留删除内容
+  /var/log、bash_history、.ssh、/tmp、swap
+
+【0x06 加密容器/特殊】
+  VeraCrypt/TrueCrypt: 找加密头(前 512B/备份头)，爆破:
+    veracrypt2john container > h ; john h --wordlist=rockyou.txt
+    truecrypt2john / hashcat -m 13721/294xx 系列
+  BitLocker: dislocker / bitlocker2john -> hashcat -m 22100
+  LUKS: luks2john img > h ; john h；hashcat -m 14600
+  内存+容器: 内存里可能有挂载中的密钥（volatility truecryptsummary）
+
+【0x07 路由器/嵌入式固件】
+  binwalk -Me firmware.bin           递归解包+提取文件系统
+  binwalk -E firmware.bin             熵分析找加密段
+  unsquashfs rootfs.squashfs
+  jefferson(jffs2)、ubi_reader(ubifs)、sasquatch
+  qemu 模拟运行:
+    qemu-system-mips -M malta -kernel vmlinux -hda root.squashfs...
+    或 firmware-analysis-toolkit/FAT、EMBA
+  固件后门: grep -r admin/password、backdoor、telnet、硬编码密钥
+
+【0x08 时间戳与报告】
+  Windows 64 位 FILETIME: 1601-01-01 起 100ns
+  Unix: 1970 起秒；Chrome/Webkit: 1601 微秒
+  时区/夏令时注意；记录证据链(谁、何时、哈希、原始介质写保护)
+  校验: md5sum/sha256sum 全程一致；操作副本，不碰原件
+==========================================================================

